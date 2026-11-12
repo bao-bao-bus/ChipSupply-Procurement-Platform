@@ -1,0 +1,192 @@
+server:
+  port: ${SERVER_PORT:8082}
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: ChipSupplyProcurementPlatform
+  autoconfigure:
+    exclude:
+      - com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration
+      # 项目提供自己的 SecurityFilterChain；同时避免精简 MVC 测试被 Actuator 默认链干扰。
+      - org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${CHIP_DB_URL:jdbc:mysql://localhost:3306/chip_supply_db?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${CHIP_DB_USER:root}
+    password: ${CHIP_DB_PASSWORD:123456}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      connection-test-query: SELECT 1
+
+  data:
+    redis:
+      host: ${CHIP_REDIS_HOST:localhost}
+      port: ${CHIP_REDIS_PORT:6379}
+      password: ${CHIP_REDIS_PASSWORD:}
+      timeout: 1500ms
+      connect-timeout: 1000ms
+  rabbitmq:
+    host: ${CHIP_RABBITMQ_HOST:localhost}
+    port: ${CHIP_RABBITMQ_PORT:5672}
+    username: ${CHIP_RABBITMQ_USER:chipsupply}
+    password: ${CHIP_RABBITMQ_PASSWORD:chipsupply-local}
+    virtual-host: ${CHIP_RABBITMQ_VHOST:/}
+    connection-timeout: 3000ms
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: auto
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 500ms
+          multiplier: 2
+          max-interval: 5s
+  cache:
+    type: redis
+    redis:
+      time-to-live: 120s
+      cache-null-values: false
+
+  # JPA配置（用于自动创建表，可选）
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+
+  # Jackson配置
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+  # 文件上传配置
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 100MB
+
+  # 国际化配置
+  messages:
+    basename: i18n/messages
+    encoding: UTF-8
+
+
+
+# 日志配置
+logging:
+  level:
+    com.chipsupply: info
+    # 输出执行 SQL、绑定参数和返回行数；设为 info 可关闭 SQL 调试日志。
+    com.chipsupply.mapper: ${CHIP_SQL_LOG_LEVEL:debug}
+    com.baomidou.mybatisplus: warn
+    org.springframework.web: info
+    org.springframework.security: warn
+  file:
+    name: logs/chipsupply.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 30
+
+# 自定义配置
+chipsupply:
+  # 数据初始化配置
+  init:
+    enabled: true
+    insert-seed-data: ${CHIP_SEED_DATA:true}
+  # 文件上传路径
+  upload:
+    path: ./uploads/
+    max-size: 10MB
+  # 系统配置
+  system:
+    name: 芯链 · 芯片采购协同平台
+    version: 3.0.0
+    agent-url: ${CHIP_AGENT_URL:http://localhost:3000}
+    copyright: © 2024-2026 芯链 · 芯片采购协同平台
+  security:
+    # 生产环境务必通过环境变量覆盖；这里的回退值只用于离线本地联调。
+    jwt-secret: ${CHIP_JWT_SECRET:}
+    jwt-expiration-minutes: ${CHIP_JWT_EXPIRATION_MINUTES:480}
+    bootstrap-password: ${CHIP_BOOTSTRAP_PASSWORD:}
+    agent-password: ${CHIP_AGENT_PASSWORD:}
+  events:
+    exchange: ${CHIP_EVENT_EXCHANGE:chipsupply.events}
+    queue: ${CHIP_EVENT_QUEUE:chipsupply.platform.events}
+    dead-letter-exchange: ${CHIP_EVENT_DLX:chipsupply.events.dlx}
+    dead-letter-queue: ${CHIP_EVENT_DLQ:chipsupply.platform.events.dlq}
+    consumer-name: ${CHIP_EVENT_CONSUMER:${HOSTNAME:local}-erp}
+    dispatch-delay-ms: ${CHIP_OUTBOX_DELAY_MS:1000}
+  rate-limit:
+    order-create-per-minute: ${CHIP_ORDER_RATE_LIMIT:30}
+
+management:
+  health:
+    # Redis 为缓存与事件加速层，故障时 Outbox/MySQL 仍保证核心业务；不应把实例判死。
+    redis:
+      enabled: false
+    # RabbitMQ 故障时事件保留在 MySQL Outbox，核心订单与库存接口仍应保持可用。
+    rabbit:
+      enabled: false
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: ${CHIP_TRACE_SAMPLING:0.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      rabbitEventBus:
+        sliding-window-size: 20
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+  retry:
+    instances:
+      rabbitEventBus:
+        max-attempts: 3
+        wait-duration: 200ms
+  timelimiter:
+    instances:
+      agentIntegration:
+        timeout-duration: 30s
+
+# MyBatis Plus 配置
+mybatis-plus:
+  # 禁用自动DDL功能
+  global-config:
+    db-config:
+      ddl-auto: none
+  # 禁用MyBatis Plus的DDL自动执行
+  configuration:
+    map-underscore-to-camel-case: true
+    use-generated-keys: true
+    use-column-label: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
